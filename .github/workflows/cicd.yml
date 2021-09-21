@@ -95,3 +95,25 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+
+  kinesis-test:
+
+    runs-on: ubuntu-latest
+    environment: terraform-aws
+    needs: terraform-deploy
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        repository: PhilRanzato/kinesis-application
+        ref: master
+    
+    - name: Configure Kinesis Agent
+      run: \
+        sudo apt update
+        sudo apt-get purge openjdk-\* icedtea-\* icedtea6-\*
+        sudo apt-get install -y openjdk-8-jdk git
+        git clone https://github.com/awslabs/amazon-kinesis-agent.git
+        cd amazon-kinesis-agent && sudo ./setup --install && cd ..
+        sudo cp agent.json /etc/aws-kinesis/agent.json
+        sudo service aws-kinesis-agent start
