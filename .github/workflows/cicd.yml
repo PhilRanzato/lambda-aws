@@ -154,11 +154,17 @@ jobs:
 
     - name: Configure Kinesis Agent
       run: |
-        echo "$KINESISAGENTJSON" agent.json
+        sed -i "s/ACCESSKEY/${AWS_ACCESS_KEY_ID}/g" agent.json
+        sed -i "s/SECRETKEY/${AWS_SECRET_ACCESS_KEY}/g" agent.json
         sudo rm -rf /etc/aws-kinesis/agent.json
         sudo mv agent.json /etc/aws-kinesis/
       env:
-        KINESISAGENTJSON: '${{ secrets.KINESISAGENTJSON }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+
+    - name: Print Kinesis Agent Configuration file
+      run: |
+        sudo cat /etc/aws-kinesis/agent.json
 
     - name: Restart Kinesis Agent to take the configuration
       run: sudo service aws-kinesis-agent restart
@@ -175,7 +181,7 @@ jobs:
       run: python kinesis-app.py
 
     - name: Wait until Kinesis Agent pushes all records
-      run: sleep 120
+      run: sleep 100
 
     - name: Check logs
-      run: tail /var/log/aws-kinesis-agent/aws-kinesis-agent.log
+      run: cat /var/log/aws-kinesis-agent/aws-kinesis-agent.log
