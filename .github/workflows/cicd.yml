@@ -59,6 +59,8 @@ jobs:
         git add .
         git commit -m "Automated packaging of lambda.py"
         git push --set-upstream origin packaged-lambda-$DATETIME
+        echo "::set-output name=function/branch::$(packaged-lambda-$DATETIME)\n"
+      id: function_branch
       env:
         EMAIL: '${{ secrets.EMAIL }}'
 
@@ -87,7 +89,7 @@ jobs:
 
     # Generates an execution plan for Terraform
     - name: Terraform Plan for Kinesis
-      run: terraform plan -var-file=testing.tfvars -target=module.kinesis_stream -out kinesis_plan
+      run: terraform plan -var-file=$TFVARS_FILE -target=module.kinesis_stream -out kinesis_plan
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -95,6 +97,7 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
 
       # On push to master, build or change infrastructure according to Terraform configuration files
       # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
@@ -111,7 +114,7 @@ jobs:
 
     # Generates an execution plan for Terraform
     - name: Terraform Plan for Lambda
-      run: terraform plan -var-file=testing.tfvars -out lambda_function
+      run: terraform plan -var-file=$TFVARS_FILE -out lambda_function
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -119,6 +122,7 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
 
       # On push to master, build or change infrastructure according to Terraform configuration files
       # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
@@ -188,3 +192,53 @@ jobs:
 
     - name: Check logs
       run: cat /var/log/aws-kinesis-agent/aws-kinesis-agent.log
+
+  terraform-destroy:
+
+    runs-on: ubuntu-latest
+    environment: terraform-aws
+    needs: kinesis-test
+
+    steps:
+
+    - uses: actions/checkout@v2
+      with:
+        ref: ${{ steps.terraform-deploy.outputs.function_branch }}
+
+    - name: Clone Terraform repository (https://github.com/PhilRanzato/terraform-lambda-aws)
+      run: |
+        git clone https://github.com/PhilRanzato/terraform-lambda-aws
+
+    - name: Move Lambda zip
+      run: |
+        mv function.zip terraform-lambda-aws/
+
+    # Install the latest version of Terraform CLI and configure the Terraform CLI configuration file with a Terraform Cloud user API token
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+
+    - name: Wait to check results before Terraform destroy
+      run: sleep 60
+
+    # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+    - name: Terraform Destroy
+      run: terraform destroy --auto-approve -var-file=$TFVARS_FILE
+      working-directory: terraform-lambda-aws
+      env:
+        TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
+        TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
+
+    - name: Delete unnecessary package-function branch
+      if: github.event_name == 'pull_request'
+      run: |
+        git config --global user.name 'PhilRanzato'
+        git config --global user.email "$EMAIL"
+        git checkout master
+        git branch -d ${{ steps.terraform-deploy.outputs.function_branch }}
+        git push origin --delete ${{ steps.terraform-deploy.outputs.function_branch }}
+      env:
+        EMAIL: '${{ secrets.EMAIL }}'
