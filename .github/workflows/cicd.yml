@@ -45,9 +45,22 @@ jobs:
     steps:
 
     - uses: actions/checkout@v2
-    - name: Zip Lambda
+      with:
+        ref: ${{ github.event.pull_request.head.ref }}
+
+    - name: Create and commit lambda.py archive to a new branch
       run: |
+        git config --global user.name 'PhilRanzato'
+        git config --global user.email "$EMAIL"
+        export DATETIME=$(date +%Y-%m-%d-%H-%M-%S)
+        git branch packaged-lambda-$DATETIME
+        git checkout packaged-lambda-$DATETIME
         zip function.zip lambda.py
+        git add .
+        git commit -m "Automated packaging of lambda.py"
+        git push --set-upstream origin packaged-lambda-$DATETIME
+      env:
+        EMAIL: '${{ secrets.EMAIL }}'
 
     - name: Clone Terraform repository (https://github.com/PhilRanzato/terraform-lambda-aws)
       run: |
@@ -73,8 +86,8 @@ jobs:
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
 
     # Generates an execution plan for Terraform
-    - name: Terraform Plan
-      run: terraform plan -var-file=testing.tfvars -out lambda_plan
+    - name: Terraform Plan for Kinesis
+      run: terraform plan -var-file=testing.tfvars -target=module.kinesis_stream -out kinesis_plan
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -85,9 +98,9 @@ jobs:
 
       # On push to master, build or change infrastructure according to Terraform configuration files
       # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
-    - name: Terraform Apply
+    - name: Terraform Apply for Kinesis
       if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
-      run: terraform apply "lambda_plan"
+      run: terraform apply "kinesis_plan"
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -95,3 +108,83 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+
+    # Generates an execution plan for Terraform
+    - name: Terraform Plan for Lambda
+      run: terraform plan -var-file=testing.tfvars -out lambda_function
+      working-directory: terraform-lambda-aws
+      env:
+        TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
+        TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+
+      # On push to master, build or change infrastructure according to Terraform configuration files
+      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
+    - name: Terraform Apply for Lambda
+      if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
+      run: terraform apply "lambda_function"
+      working-directory: terraform-lambda-aws
+      env:
+        TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
+        TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+
+  kinesis-test:
+
+    runs-on: ubuntu-18.04
+    environment: terraform-aws
+    needs: terraform-deploy
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        repository: PhilRanzato/kinesis-application
+        ref: master
+    
+    - name: Install Kinesis Agent
+      run: |
+        sudo apt-get purge openjdk-\* icedtea-\* icedtea6-\*
+        sudo apt-get -y install openjdk-8-jdk git
+        git clone https://github.com/awslabs/amazon-kinesis-agent.git
+        cd amazon-kinesis-agent && sudo ./setup --install && cd ..
+
+    - name: Start Kinesis Agent
+      run: sudo service aws-kinesis-agent start
+
+    - name: Configure Kinesis Agent
+      run: |
+        sed -i "s/ACCESSKEY/${AWS_ACCESS_KEY_ID}/g" agent.json
+        sed -i "s/SECRETKEY/${AWS_SECRET_ACCESS_KEY}/g" agent.json
+        sudo rm -rf /etc/aws-kinesis/agent.json
+        sudo mv agent.json /etc/aws-kinesis/
+      env:
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+
+    - name: Print Kinesis Agent Configuration file
+      run: |
+        sudo cat /etc/aws-kinesis/agent.json
+
+    - name: Restart Kinesis Agent to take the configuration
+      run: sudo service aws-kinesis-agent restart
+
+    - name: Wait until Kinesis Agent is fully up and running
+      run: sleep 60
+
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Run script
+      run: python kinesis-app.py
+
+    - name: Wait until Kinesis Agent pushes all records
+      run: sleep 100
+
+    - name: Check logs
+      run: cat /var/log/aws-kinesis-agent/aws-kinesis-agent.log
