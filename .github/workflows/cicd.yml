@@ -48,14 +48,17 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.ref }}
 
-    - name: Create and commit lambda.py archive
+    - name: Create and commit lambda.py archive to a new branch
       run: |
-        zip function.zip lambda.py
         git config --global user.name 'PhilRanzato'
         git config --global user.email "$EMAIL"
+        export DATETIME=$(date +%Y-%m-%d-%H-%M-%S)
+        git branch packaged-lambda-$DATETIME
+        git checkout packaged-lambda-$DATETIME
+        zip function.zip lambda.py
         git add .
         git commit -m "Automated packaging of lambda.py"
-        git push
+        git push --set-upstream origin packaged-lambda-$DATETIME
       env:
         EMAIL: '${{ secrets.EMAIL }}'
 
