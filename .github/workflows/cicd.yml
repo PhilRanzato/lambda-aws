@@ -235,6 +235,7 @@ jobs:
       run: |
         git config --global user.name 'PhilRanzato'
         git config --global user.email "$EMAIL"
+        git fetch
         git checkout master
         git branch -d ${{ steps.terraform-deploy.outputs.function_branch }}
         git push origin --delete ${{ steps.terraform-deploy.outputs.function_branch }}
