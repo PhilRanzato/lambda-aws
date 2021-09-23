@@ -86,7 +86,7 @@ jobs:
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
 
     - name: Terraform Plan for Kinesis
-      run: terraform plan -var-file=$TFVARS_FILE -target=module.kinesis_stream -out kinesis_plan
+      run: terraform plan -var-file=$TFVARS_FILE -target=module.kinesis_stream -target=module.dynamodb_table -out dependencies
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -98,7 +98,7 @@ jobs:
 
     - name: Terraform Apply for Kinesis
       if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
-      run: terraform apply "kinesis_plan"
+      run: terraform apply "dependencies"
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
