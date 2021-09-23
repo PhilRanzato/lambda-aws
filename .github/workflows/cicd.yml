@@ -1,6 +1,3 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
 name: Deploy Lambda
 
 on:
@@ -41,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: terraform-aws
     needs: lint
+    outputs:
+      function_branch: ${{ steps.function_branch.outputs.function_branch }}
 
     steps:
 
@@ -59,6 +58,8 @@ jobs:
         git add .
         git commit -m "Automated packaging of lambda.py"
         git push --set-upstream origin packaged-lambda-$DATETIME
+        echo "::set-output name=function_branch::packaged-lambda-$DATETIME"
+      id: function_branch
       env:
         EMAIL: '${{ secrets.EMAIL }}'
 
@@ -74,7 +75,6 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v1
 
-    # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
     - name: Terraform Init
       run: terraform init
       working-directory: terraform-lambda-aws
@@ -85,9 +85,8 @@ jobs:
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
 
-    # Generates an execution plan for Terraform
     - name: Terraform Plan for Kinesis
-      run: terraform plan -var-file=testing.tfvars -target=module.kinesis_stream -out kinesis_plan
+      run: terraform plan -var-file=$TFVARS_FILE -target=module.kinesis_stream -out kinesis_plan
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -95,9 +94,8 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
 
-      # On push to master, build or change infrastructure according to Terraform configuration files
-      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
     - name: Terraform Apply for Kinesis
       if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
       run: terraform apply "kinesis_plan"
@@ -109,9 +107,8 @@ jobs:
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
 
-    # Generates an execution plan for Terraform
     - name: Terraform Plan for Lambda
-      run: terraform plan -var-file=testing.tfvars -out lambda_function
+      run: terraform plan -var-file=$TFVARS_FILE -out lambda_function
       working-directory: terraform-lambda-aws
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
@@ -119,9 +116,8 @@ jobs:
         AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
         AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
         AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
 
-      # On push to master, build or change infrastructure according to Terraform configuration files
-      # Note: It is recommended to set up a required "strict" status check in your repository for "Terraform Cloud". See the documentation on "strict" required status checks for more information: https://help.github.com/en/github/administering-a-repository/types-of-required-status-checks
     - name: Terraform Apply for Lambda
       if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
       run: terraform apply "lambda_function"
@@ -188,3 +184,61 @@ jobs:
 
     - name: Check logs
       run: cat /var/log/aws-kinesis-agent/aws-kinesis-agent.log
+
+  terraform-destroy:
+
+    runs-on: ubuntu-latest
+    environment: terraform-aws
+    needs: [terraform-deploy, kinesis-test]
+
+    steps:
+
+    - uses: actions/checkout@v2
+      with:
+        ref: ${{ steps.terraform-deploy.outputs.function_branch }}
+
+    - name: Clone Terraform repository (https://github.com/PhilRanzato/terraform-lambda-aws)
+      run: |
+        git clone https://github.com/PhilRanzato/terraform-lambda-aws
+
+    - name: Move Lambda zip
+      run: |
+        mv function.zip terraform-lambda-aws/
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+
+    - name: Wait to check results before Terraform destroy
+      run: sleep 60
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: terraform-lambda-aws
+      env:
+        TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
+        TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+
+    - name: Terraform Destroy
+      run: terraform destroy --auto-approve -var-file=$TFVARS_FILE
+      working-directory: terraform-lambda-aws
+      env:
+        TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
+        TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
+        AWS_ACCESS_KEY_ID: '${{ secrets.AWS_ACCESS_KEY_ID }}'
+        AWS_SECRET_ACCESS_KEY: '${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        AWS_DEFAULT_REGION: '${{ secrets.AWS_DEFAULT_REGION }}'
+        TFVARS_FILE: '${{ secrets.TFVARS_FILE }}'
+
+    - name: Delete unnecessary package-function branch
+      if: github.event_name == 'pull_request'
+      run: |
+        git config --global user.name 'PhilRanzato'
+        git config --global user.email "$EMAIL"
+        git fetch
+        git checkout master
+        git push origin --delete ${{ needs.terraform-deploy.outputs.function_branch }}
+      env:
+        EMAIL: '${{ secrets.EMAIL }}'
