@@ -38,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: terraform-aws
     needs: lint
+    outputs:
+      function_branch: ${{ steps.function_branch.outputs.function_branch }}
 
     steps:
 
@@ -56,7 +58,7 @@ jobs:
         git add .
         git commit -m "Automated packaging of lambda.py"
         git push --set-upstream origin packaged-lambda-$DATETIME
-        echo "::set-output name=function/branch::$(packaged-lambda-$DATETIME)\n"
+        echo "::set-output name=function_branch::packaged-lambda-$DATETIME"
       id: function_branch
       env:
         EMAIL: '${{ secrets.EMAIL }}'
@@ -187,7 +189,7 @@ jobs:
 
     runs-on: ubuntu-latest
     environment: terraform-aws
-    needs: kinesis-test
+    needs: [terraform-deploy, kinesis-test]
 
     steps:
 
@@ -237,7 +239,6 @@ jobs:
         git config --global user.email "$EMAIL"
         git fetch
         git checkout master
-        git branch -d ${{ steps.terraform-deploy.outputs.function_branch }}
-        git push origin --delete ${{ steps.terraform-deploy.outputs.function_branch }}
+        git push origin --delete ${{ needs.terraform-deploy.outputs.function_branch }}
       env:
         EMAIL: '${{ secrets.EMAIL }}'
