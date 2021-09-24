@@ -20,6 +20,6 @@ def lambda_handler(event, context):
 
     # Writing into DynamoDB table dynamodb-kinesis
     client = boto3.resource('dynamodb')
-    table = client.Table("dynamodb-kinesis")
+    table = client.Table("application-logs-table")
     for message in messages:
         table.put_item(Item=message)
