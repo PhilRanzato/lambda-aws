@@ -224,6 +224,7 @@ jobs:
     - name: Terraform Destroy
       run: terraform destroy --auto-approve -var-file=$TFVARS_FILE
       working-directory: terraform-lambda-aws
+      # if: github.event_name == 'pull_request'
       env:
         TF_VAR_access_key: '${{ secrets.TF_VAR_ACCESS_KEY }}'
         TF_VAR_secret_key: '${{ secrets.TF_VAR_SECRET_KEY }}'
